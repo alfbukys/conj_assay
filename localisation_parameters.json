@@ -1,0 +1,1 @@
+{"ellipticity_thresholds": {"t1": 0.5, "t2": 0.6, "t3": 0.7}, "spread_thresholds": {"t1": 6.0, "t2": 7.0, "t3": 8.0}, "background_thresholds": {"t1": 3000, "t2": 3500, "t3": 4000}}
