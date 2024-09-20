@@ -1,0 +1,1 @@
+{"use_custom_regex": true, "default_regex_pattern": "(\\w+)\\.\\w+", "custom_regex_pattern": "(?P<file_id>[\\w-]+-\\d+)_.*_(?P<slice_id>S\\d+)_.*"}
