@@ -1,4 +1,7 @@
 import os
+from re import Match
+from typing import Tuple
+
 import pandas as pd
 import numpy as np
 import shapely as sp
@@ -7,7 +10,6 @@ import pims
 from skimage import draw
 from scipy.interpolate import splprep, splev
 import re
-import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -15,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 def extract_file_and_slice(input_string: str) -> tuple[str, str] | tuple[None, None]:
     """
     Extract the file name and slice id from the filepath via regex pattern matching.
-    Expected pattern is Filename_123_xxx_S123_xxx
+    Expected pattern is Filename-123_xxx_S123_xxx
     :param input_string: filepath of segmentation outline .csv file
     :return: file name and slice id as strings
     """
@@ -28,23 +30,65 @@ def extract_file_and_slice(input_string: str) -> tuple[str, str] | tuple[None, N
         return file_id, slice_id
 
     else:
-        return None, None,
+        return None, None
 
 
-def match_files(file_to_match: str, file_id: str, slice_id: str) -> bool:
+def extract_file_name(input_string: str, pattern: str) -> str | None:
+    """
+    Extract the file name from the filepath via regex pattern matching.
+    :param input_string: filepath of segmentation outline .csv file
+    :param pattern: regex pattern for matching
+    :return: extracted file name
+    """
+    print(input_string)
+    match = re.match(pattern, input_string)
+    if match:
+        if len(match.groups()) > 1:
+            file_name = "_".join(match.groups())
+        else:
+            file_name = match.group(1)
+        return file_name
+    else:
+        return None
+
+
+def match_files(file_to_match: str, file_name_match: str, pattern: str) -> bool:
     """
     Check if names for segmentation files and localisations match.
-    :param file_to_match: filename from the image_name column of the localisations dataframe
-    :param file_id: extracted file_id from segmentation file
-    :param slice_id: extracted slice_id from segmentation file
+    :param file_to_match: file name from the segmentation file
+    :param file_name_match: file name from image_name column of the localisations dataframe
+    :param pattern: regex pattern
     :return: True or False depending on whether the extracted file_id and slice_id match
     """
-    pattern = r"(?P<file_id>[\w-]+-\d+)_.*_(?P<slice_id>S\d+)_.*"
     match = re.match(pattern, file_to_match)
-    if match and match.group("file_id") == file_id and match.group("slice_id") == slice_id:
-        return True
+    if match:
+        if len(match.groups()) > 1:
+            file_name = "_".join(match.groups())
+        else:
+            file_name = match.group(1)
+        if file_name == file_name_match:
+            return True
+        else:
+            return False
     else:
         return False
+
+
+#
+# def match_files(file_to_match: str, file_id: str, slice_id: str) -> bool:
+#     """
+#     Check if names for segmentation files and localisations match.
+#     :param file_to_match: filename from the image_name column of the localisations dataframe
+#     :param file_id: extracted file_id from segmentation file
+#     :param slice_id: extracted slice_id from segmentation file
+#     :return: True or False depending on whether the extracted file_id and slice_id match
+#     """
+#     pattern = r"(?P<file_id>[\w-]+-\d+)_.*_(?P<slice_id>S\d+)_.*"
+#     match = re.match(pattern, file_to_match)
+#     if match and match.group("file_id") == file_id and match.group("slice_id") == slice_id:
+#         return True
+#     else:
+#         return False
 
 
 def score_poor_locs(locs, quality_parameters: dict) -> int:
@@ -212,7 +256,7 @@ def generate_cells_df(fov_segmentation: pd.DataFrame, fov_localisations: pd.Data
 
 
 def assign_files(donor_tiff_paths: str, localisations_csv_path: str, quality_parameters: dict,
-                 cell_fluorescence_thresholds: dict, recipient_tiff_paths: str = None) -> tuple[
+                 cell_fluorescence_thresholds: dict, regex_pattern: str, recipient_tiff_paths: str = None) -> tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     all_localisations = pd.read_csv(localisations_csv_path)
     fov_name_list = []
@@ -244,15 +288,17 @@ def assign_files(donor_tiff_paths: str, localisations_csv_path: str, quality_par
         segmentation_csv_path = filepath.split('.')[0] + '.csv'
         if os.path.isfile(segmentation_csv_path) and segmentation_csv_path != localisations_csv_path:
             fov_segmentation = pd.read_csv(segmentation_csv_path)
-            file_id, slice_id = extract_file_and_slice(os.path.basename(filepath))
-            fov_name = f'{file_id}_{slice_id}'
-            fov_name_list.append(fov_name)
+            file_name = extract_file_name(os.path.basename(filepath), regex_pattern)
+            print(file_name)
+            # file_id, slice_id = extract_file_and_slice(os.path.basename(filepath))
+            fov_name_list.append(file_name)
+            all_localisations['tst'] = all_localisations.image_name.apply(match_files, args=(file_name, regex_pattern))
             fov_localisations = all_localisations[
-                all_localisations.image_name.apply(match_files, args=(file_id, slice_id))].copy()
+                all_localisations.image_name.apply(match_files, args=(file_name, regex_pattern))].copy()
             fov_localisations = fov_localisations[fov_localisations.bg > 0]
             fov_localisations['quality_score'] = fov_localisations.apply(score_poor_locs, args=(quality_parameters,),
                                                                          axis=1)
-            fov_localisations['fov_name'] = fov_name
+            fov_localisations['fov_name'] = file_name
             all_fov_locs_list.append(fov_localisations)
             donor_channel = pims.open(filepath)[0]
             donor_images.append(donor_channel)
@@ -265,14 +311,14 @@ def assign_files(donor_tiff_paths: str, localisations_csv_path: str, quality_par
 
             if all_recipient_tiff_paths_df is not None:
                 fov_recipient_tiff_path = all_recipient_tiff_paths_df[
-                    all_recipient_tiff_paths_df.basename.apply(match_files, args=(file_id, slice_id,))
+                    all_recipient_tiff_paths_df.basename.apply(match_files, args=(file_name, regex_pattern,))
                 ].path.iloc[0]
                 recipient_channel = pims.open(fov_recipient_tiff_path)[0]
                 recipient_images.append(recipient_channel)
             else:
                 recipient_images.append(np.nan)
 
-            cells_gdf, locs_df = generate_cells_df(fov_segmentation, fov_localisations, fov_name, donor_channel,
+            cells_gdf, locs_df = generate_cells_df(fov_segmentation, fov_localisations, file_name, donor_channel,
                                                    crop_box, recipient_channel, donor_fluorescence_threshold,
                                                    recipient_fluorescence_threshold)
             cells_list.append(cells_gdf)
@@ -290,7 +336,7 @@ def assign_files(donor_tiff_paths: str, localisations_csv_path: str, quality_par
             transconjugants_per_donor.append(get_transconjugants_per_donor(transconjugants, donors))
             transconjugants_per_FOV.append(get_transconjugants_per_fov(donors, recipients, transconjugants))
             da_ratio.append(get_cell_ratio(donors, recipients, transconjugants))
-            print(fov_name, ' has been processed')
+            print(file_name, ' has been processed')
 
     results_df = pd.DataFrame({
         'file': fov_name_list,
@@ -345,4 +391,3 @@ def get_cell_ratio(total_donors, total_recipients, total_transconjugants):
         return np.nan
     else:
         return ratio
-

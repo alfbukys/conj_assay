@@ -47,10 +47,13 @@ class MainWindow(QMainWindow):
         settingsMenu = menuBar.addMenu("&Settings")
         loc_quality_parameters = QAction("Localisation Quality Parameters", self)
         cell_fluorescence_parameters = QAction("Cell Fluorescence Parameters", self)
+        file_matching_parameters = QAction("File Matching Parameters", self)
         settingsMenu.addAction(loc_quality_parameters)
         settingsMenu.addAction(cell_fluorescence_parameters)
+        settingsMenu.addAction(file_matching_parameters)
         loc_quality_parameters.triggered.connect(self.open_localisation_parameters_window)
         cell_fluorescence_parameters.triggered.connect(self.open_cell_parameters_window)
+        file_matching_parameters.triggered.connect(self.open_file_matching_parameters_window)
 
         # basic properties of the window
 
@@ -119,6 +122,10 @@ class MainWindow(QMainWindow):
         self.cell_parameters_window = CellFluorescenceWindow()
         self.cell_parameters_window.show()
 
+    def open_file_matching_parameters_window(self):
+        self.file_matching_parameters_window = FileMatchingWindow()
+        self.file_matching_parameters_window.show()
+
     def open_multiple_files_dialog(self, button):
 
         filenames, _ = QFileDialog.getOpenFileNames(
@@ -146,15 +153,24 @@ class MainWindow(QMainWindow):
         if self.donor_tiff_paths and self.localisations_csv_path:
             self.fov_dropdown.clear()
             with open('localisation_parameters.json', 'r') as f:
-                self.loc_quality_parameters = json.load(f)
+                loc_quality_parameters = json.load(f)
             with open('cell_fluorescence_parameters.json', 'r') as f:
-                self.cell_fluorescence_parameters = json.load(f)
+                cell_fluorescence_parameters = json.load(f)
+            with open('file_matching_parameters.json', 'r') as f:
+                file_matching_parameters = json.load(f)
+            if file_matching_parameters['use_custom_regex']:
+                regex_pattern = file_matching_parameters['custom_regex_pattern']
+            else:
+                regex_pattern = file_matching_parameters['default_regex_pattern']
+
+
             start_time = time.time()
             self.cells_df, self.locs_df, self.results_df, self.images_df, self.all_fov_locs_df = assign_files(
                 self.donor_tiff_paths,
                 self.localisations_csv_path,
-                self.loc_quality_parameters,
-                self.cell_fluorescence_parameters,
+                loc_quality_parameters,
+                cell_fluorescence_parameters,
+                regex_pattern,
                 self.recipient_tiff_paths)
             end_time = time.time()
             elapsed_time = end_time - start_time
@@ -238,6 +254,30 @@ def plot_efficiency(results_df):
     ax.boxplot(results_df.conjugation_efficiency)
     fig.set_tight_layout(True)
     return fig
+
+class FileMatchingWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        with open('file_matching_parameters.json', 'r') as f:
+            self.file_matching_parameters = json.load(f)
+
+        self.setWindowTitle('File matching parameters')
+        window_layout = QVBoxLayout()
+        self.use_custom_regex = QCheckBox('Use custom regex')
+        self.use_custom_regex.setChecked(self.file_matching_parameters['use_custom_regex'])
+        window_layout.addWidget(self.use_custom_regex)
+        save_button = QPushButton('Save Settings')
+        save_button.clicked.connect(self.save_settings)
+        window_layout.addWidget(save_button)
+        self.setLayout(window_layout)
+        self.custom_pattern = r"(?P<file_id>[\w-]+-\d+)_.*_(?P<slice_id>S\d+)_.*"
+        self.default = r"(\w+)\.\w+"
+    def save_settings(self):
+        parameters_dict = {'use_custom_regex': self.use_custom_regex.isChecked(),
+                           'default_regex_pattern': self.default,
+                           'custom_regex_pattern': self.custom_pattern}
+        with open('file_matching_parameters.json', 'w') as outfile:
+            json.dump(parameters_dict, outfile)
 
 
 class LocQualityParametersWindow(QWidget):
